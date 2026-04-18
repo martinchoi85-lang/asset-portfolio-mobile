@@ -208,7 +208,7 @@ fun AssetTrendCard() {
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp) // Border handled by modifier in real app
     ) {
         Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
-            Row(justifyContent = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("Asset Trend", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 // 1W, 1M, 3M 탭 생략 (UI 구조화 집중)
                 Text("1W | 1M | 3M", fontSize = 11.sp, color = TextGray, fontWeight = FontWeight.Bold)
@@ -235,8 +235,8 @@ fun PerformanceInsightCard() {
                 Text("PERFORMANCE INSIGHT", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(16.dp))
-            Row(justifyContent = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Column {
                     Text("NVIDIA", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Text("Top Performing Asset", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                 }
@@ -280,8 +280,8 @@ fun AllocationCard(allocation: List<AllocationItem>) {
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
-            Row(justifyContent = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text("Portfolio Allocation", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text("Portfolio Allocation", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text("Details >", color = PrimaryRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(24.dp))

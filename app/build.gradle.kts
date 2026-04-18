@@ -68,4 +68,6 @@ dependencies {
 
     // (선택) 차트 라이브러리: Recharts를 대체할 강력한 도구
     implementation("com.patrykandpatrick.vico:compose:1.14.0")
+    implementation("androidx.compose.material:material-icons-core:1.7.0") // 필수
+    implementation("androidx.compose.material:material-icons-extended:1.7.0") // 추가 필요
 }
