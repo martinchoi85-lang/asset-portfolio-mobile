@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -70,4 +71,10 @@ dependencies {
     implementation("com.patrykandpatrick.vico:compose:1.14.0")
     implementation("androidx.compose.material:material-icons-core:1.7.0") // 필수
     implementation("androidx.compose.material:material-icons-extended:1.7.0") // 추가 필요
+
+    implementation(libs.supabase.postgrest)
+    implementation(libs.supabase.gotrue)
+    implementation(libs.ktor.client.android)
+    implementation(libs.androidx.navigation.compose)
+
 }
