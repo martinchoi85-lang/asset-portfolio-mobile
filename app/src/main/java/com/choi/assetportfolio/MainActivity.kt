@@ -13,44 +13,24 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.choi.assetportfolio.ui.dashboard.DashboardUiState
-import com.choi.assetportfolio.ui.dashboard.DashboardViewModel
-import dagger.hilt.android.AndroidEntryPoint
+import com.choi.assetportfolio.ui.dashboard.DashboardScreen
+import com.choi.assetportfolio.ui.dashboard.FinancialDashboardViewModel
 
-@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private val viewModel: DashboardViewModel by viewModels()
+    // TODO: Hilt 등 DI 의존성이 없으므로, ViewModel Factory를 통해 수동 주입이 필요합니다.
+    private lateinit var viewModel: FinancialDashboardViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        viewModel.checkSessionAndFetch()
+        // viewModel.fetchDashboardData() // 초기화 후 호출 필요
         
         setContent {
             val navController = rememberNavController()
-            val uiState by viewModel.uiState.collectAsState()
 
             NavHost(navController = navController, startDestination = "dashboard") {
                 composable("dashboard") {
-                    when (val state = uiState) {
-                        is DashboardUiState.Loading -> CircularProgressIndicator()
-                        is DashboardUiState.Unauthorized -> {
-                            // Redirect to login logic
-                            Text("로그인이 필요합니다.")
-                        }
-                        is DashboardUiState.Error -> Text("Error: ${state.message}")
-                        is DashboardUiState.Success -> {
-                            Column {
-                                Button(onClick = { viewModel.togglePrivacyMode() }) {
-                                    Text("Toggle Privacy Mode")
-                                }
-                                LazyColumn {
-                                    items(state.data) { asset ->
-                                        val displayValue = if (state.isMasked) "****" else asset.amount.toString()
-                                        Text(text = "${asset.name}: $displayValue")
-                                    }
-                                }
-                            }
-                        }
+                    if (::viewModel.isInitialized) {
+                        DashboardScreen(viewModel = viewModel)
                     }
                 }
             }
