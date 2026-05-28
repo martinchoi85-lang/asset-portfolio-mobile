@@ -13,16 +13,45 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import io.github.jan.supabase.postgrest.postgrest
+import com.choi.assetportfolio.data.repository.AssetRepositoryImpl
+import com.choi.assetportfolio.data.repository.PortfolioRepository
+import com.choi.assetportfolio.domain.usecase.CalculatePortfolioYieldUseCase
+import com.choi.assetportfolio.domain.usecase.GetLookthroughAllocationUseCase
 import com.choi.assetportfolio.ui.dashboard.DashboardScreen
 import com.choi.assetportfolio.ui.dashboard.FinancialDashboardViewModel
 
+import com.choi.assetportfolio.core.util.AppLogger
+
 class MainActivity : ComponentActivity() {
-    // TODO: Hilt 등 DI 의존성이 없으므로, ViewModel Factory를 통해 수동 주입이 필요합니다.
     private lateinit var viewModel: FinancialDashboardViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // viewModel.fetchDashboardData() // 초기화 후 호출 필요
+        AppLogger.d("MainActivity onCreate - 시작")
+        
+        val postgrest = (application as AssetApplication).supabase.postgrest
+        val assetRepository = AssetRepositoryImpl(postgrest)
+        val portfolioRepository = PortfolioRepository(postgrest)
+        val calculatePortfolioYieldUseCase = CalculatePortfolioYieldUseCase()
+        val getLookthroughAllocationUseCase = GetLookthroughAllocationUseCase()
+
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                AppLogger.d("ViewModelProvider.Factory - FinancialDashboardViewModel 생성")
+                return FinancialDashboardViewModel(
+                    assetRepository = assetRepository,
+                    portfolioRepository = portfolioRepository,
+                    calculatePortfolioYieldUseCase = calculatePortfolioYieldUseCase,
+                    getLookthroughAllocationUseCase = getLookthroughAllocationUseCase
+                ) as T
+            }
+        }
+        viewModel = ViewModelProvider(this, factory)[FinancialDashboardViewModel::class.java]
+        AppLogger.d("MainActivity - ViewModel 초기화 완료")
         
         setContent {
             val navController = rememberNavController()
@@ -30,7 +59,10 @@ class MainActivity : ComponentActivity() {
             NavHost(navController = navController, startDestination = "dashboard") {
                 composable("dashboard") {
                     if (::viewModel.isInitialized) {
+                        AppLogger.d("NavHost - DashboardScreen 진입")
                         DashboardScreen(viewModel = viewModel)
+                    } else {
+                        AppLogger.e("NavHost - ViewModel이 초기화되지 않음")
                     }
                 }
             }
