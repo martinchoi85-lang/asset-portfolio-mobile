@@ -1,8 +1,20 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+val supabaseUrl = localProperties.getProperty("supabase.url") ?: ""
+val supabaseKey = localProperties.getProperty("supabase.key") ?: ""
 
 android {
     namespace = "com.choi.assetportfolio"
@@ -20,6 +32,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
     }
 
     buildTypes {
@@ -37,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
