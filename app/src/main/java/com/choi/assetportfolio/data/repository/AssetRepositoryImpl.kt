@@ -14,7 +14,8 @@ import kotlinx.serialization.Serializable
  * RLS 권한 에러(42501)에 대한 예외 처리가 포함되어 있습니다.
  */
 class AssetRepositoryImpl(
-    private val postgrest: Postgrest
+    private val postgrest: Postgrest,
+    private val syncRepository: SyncRepository
 ) : AssetRepository {
 
     private var dashboardCache: List<DashboardAsset>? = null
@@ -25,9 +26,10 @@ class AssetRepositoryImpl(
     }
 
     /**
-     * Supabase 호출을 래핑하여 공통 예외(권한 부족 등)를 처리합니다.
+     * Supabase 호출을 래핑하여 공통 예외(권한 부족 등)와 네트워크 단절을 처리합니다.
+     * 네트워크 에러 발생 시 fallbackBlock을 통해 로컬 Room DB 캐시로 스위칭합니다.
      */
-    private suspend fun <T> wrapSupabaseCall(block: suspend () -> T): T {
+    private suspend fun <T> wrapSupabaseCall(fallbackBlock: (suspend () -> T)? = null, block: suspend () -> T): T {
         return try {
             block()
         } catch (e: RestException) {
@@ -35,11 +37,36 @@ class AssetRepositoryImpl(
                 AppLogger.e("Permission Denied (42501): RLS 정책 또는 GRANT 설정을 확인하세요.", e)
                 throw IllegalStateException("권한 설정이 필요합니다. 관리자에게 문의하세요.")
             }
+            if (e.message?.contains("timeout", ignoreCase = true) == true) {
+                AppLogger.e("네트워크 연결 시간 초과. 로컬 캐시 폴백 시도", e)
+                fallbackBlock?.invoke() ?: throw e
+            }
+            throw e
+        } catch (e: java.net.SocketTimeoutException) {
+            AppLogger.e("네트워크 단절: SocketTimeoutException. 로컬 캐시 폴백 시도", e)
+            fallbackBlock?.invoke() ?: throw e
+        } catch (e: java.net.UnknownHostException) {
+            AppLogger.e("네트워크 단절: UnknownHostException. 로컬 캐시 폴백 시도", e)
+            fallbackBlock?.invoke() ?: throw e
+        } catch (e: java.net.ConnectException) {
+            AppLogger.e("네트워크 단절: ConnectException. 로컬 캐시 폴백 시도", e)
+            fallbackBlock?.invoke() ?: throw e
+        } catch (e: Exception) {
+            // 다른 종류의 네트워크 예외일 가능성 확인
+            if (e.message?.contains("Failed to connect") == true || e.message?.contains("timeout") == true) {
+                AppLogger.e("기타 네트워크 단절 에러. 로컬 캐시 폴백 시도", e)
+                fallbackBlock?.invoke() ?: throw e
+            }
             throw e
         }
     }
 
-    override suspend fun fetchUserAccounts(): List<Account> = wrapSupabaseCall {
+    override suspend fun fetchUserAccounts(): List<Account> = wrapSupabaseCall(
+        fallbackBlock = {
+            AppLogger.d("fetchUserAccounts Fallback - 로컬 캐시(또는 빈 리스트) 반환")
+            emptyList()
+        }
+    ) {
         val userId = SessionManager.requireUserId()
         if (userId.isBlank()) {
             AppLogger.d("fetchUserAccounts - userId is blank, returning empty list")
@@ -73,7 +100,12 @@ class AssetRepositoryImpl(
         allAccounts
     }
 
-    override suspend fun fetchUserAssets(): List<Asset> = wrapSupabaseCall {
+    override suspend fun fetchUserAssets(): List<Asset> = wrapSupabaseCall(
+        fallbackBlock = {
+            AppLogger.d("fetchUserAssets Fallback - 로컬 캐시 반환")
+            emptyList()
+        }
+    ) {
         val userId = SessionManager.requireUserId()
         if (userId.isBlank()) {
             AppLogger.d("fetchUserAssets - userId is blank, returning empty list")
@@ -107,13 +139,22 @@ class AssetRepositoryImpl(
         allAssets
     }
 
-    override suspend fun fetchDashboardAssets(): List<DashboardAsset> = wrapSupabaseCall {
-        if (dashboardCache != null) {
-            AppLogger.d("fetchDashboardAssets - returning from cache", data = "${dashboardCache?.size} assets")
-            return@wrapSupabaseCall dashboardCache!!
+    override suspend fun fetchDashboardAssets(): List<DashboardAsset> {
+        // 동기화 파이프라인: 캐시 건전성 확인
+        if (!syncRepository.isLocalCacheDirty.value && !dashboardCache.isNullOrEmpty()) {
+            AppLogger.d("AssetRepositoryImpl - 캐시가 건전하여 로컬 스트림을 반환합니다.")
+            return dashboardCache!!
         }
 
-        val accountIds = fetchUserAccounts().map { it.id }
+        AppLogger.d("SyncEngine: Local Cache Dirty Detected - Initiating Remote Fetch")
+
+        return wrapSupabaseCall(
+            fallbackBlock = {
+                AppLogger.d("fetchDashboardAssets Fallback - 로컬 캐시 반환")
+                dashboardCache ?: emptyList()
+            }
+        ) {
+            val accountIds = fetchUserAccounts().map { it.id }
         if (accountIds.isEmpty()) {
             AppLogger.d("fetchDashboardAssets - accountIds is empty, returning empty list")
             return@wrapSupabaseCall emptyList()
@@ -200,10 +241,20 @@ class AssetRepositoryImpl(
 
         AppLogger.d("fetchDashboardAssets 결과 집계 완료", data = "${dashboardAssets.size} assets grouped and calculated")
         dashboardCache = dashboardAssets
+        
+        // 데이터 패치 성공 시 캐시 오염 상태 해제
+        syncRepository.setCacheDirty(false)
+        
         dashboardAssets
     }
+}
 
-    override suspend fun getAssetSegments(assetId: Long): List<AssetSegment> = wrapSupabaseCall {
+    override suspend fun getAssetSegments(assetId: Long): List<AssetSegment> = wrapSupabaseCall(
+        fallbackBlock = {
+            AppLogger.d("getAssetSegments Fallback - 로컬 캐시 반환")
+            emptyList()
+        }
+    ) {
         val userId = SessionManager.requireUserId()
         if (userId.isBlank()) {
             AppLogger.d("getAssetSegments - userId is blank, returning empty list")

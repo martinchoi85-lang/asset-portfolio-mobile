@@ -1,51 +1,49 @@
 package com.choi.assetportfolio.data.repository
 
 import com.choi.assetportfolio.core.session.SessionManager
-import com.choi.assetportfolio.data.local.entity.LocalTransactionEntity
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import com.choi.assetportfolio.core.util.AppLogger
 
 /**
  * Room(로컬 캐시)과 Supabase(원격 DB) 간의 데이터 동기화를 관리합니다.
- * Dirty Flag 전략을 사용하여 오프라인에서 생성된 데이터를 추후 동기화합니다.
+ * Dirty Flag 전략을 사용하여 오프라인에서 생성된 데이터를 추후 동기화하거나
+ * 백그라운드 Fetch 실패 시 포그라운드에서 재시도합니다.
  */
 class SyncRepository(
     private val postgrest: Postgrest
-    // private val localDao: TransactionDao // Room DAO (가정)
 ) {
-    /**
-     * Dirty Flag가 설정된 트랜잭션들을 서버로 업로드합니다.
-     */
-    suspend fun syncTransactions() = withContext(Dispatchers.IO) {
-        AppLogger.d("syncTransactions - 동기화 시작")
-        // 1. 세션 체크 (세션 만료 시 SessionManager에서 IllegalStateException 발생)
-        val userId = try {
-            SessionManager.requireUserId()
-        } catch (e: IllegalStateException) {
-            AppLogger.e("syncTransactions - 세션이 없어 동기화 중단", e)
-            return@withContext
+    // 앱 전역 캐시 오염 상태 (초기에는 앱 구동 시 강제 동기화를 위해 true로 가정)
+    private val _isLocalCacheDirty = MutableStateFlow(true)
+    val isLocalCacheDirty = _isLocalCacheDirty.asStateFlow()
+
+    fun setCacheDirty(isDirty: Boolean) {
+        _isLocalCacheDirty.value = isDirty
+        if (isDirty) {
+            AppLogger.d("SyncEngine: Local Cache Dirty Marked", data = "백그라운드 동기화 실패 또는 명시적 오염 처리")
+        } else {
+            AppLogger.d("SyncEngine: Local Cache Cleaned", data = "최종 동기화 완료 및 캐시 최신화")
         }
+    }
 
-        AppLogger.d("syncTransactions - 사용자 세션 확인 완료", data = "userId=$userId")
-
-        // 2. 로컬에서 isDirty=true인 항목 조회 (가상 코드)
-        // val dirtyTransactions = localDao.getDirtyTransactions()
-        // if (dirtyTransactions.isEmpty()) return@withContext
-
-        // 3. Supabase로 일괄 업로드 (Upsert)
-        // try {
-        //     postgrest.from("transactions").upsert(dirtyTransactions) {
-        //         // user_id를 포함하여 데이터 격리 보장
-        //         filter { eq("user_id", userId) }
-        //     }
-        //     // 성공 시 로컬의 Dirty Flag 해제
-        //     localDao.markAsSynced(dirtyTransactions.map { it.localId })
-        // } catch (e: Exception) {
-        //     // 실패 시 에러 로그 기록 및 다음 주기 재시도
-        //     localDao.updateSyncError(dirtyTransactions.map { it.localId }, e.localizedMessage)
-        // }
+    /**
+     * 포그라운드 진입 시 호출되어, Dirty Flag가 켜져있으면 주어진 동기화(Refresh) 작업을 즉시 수행합니다.
+     */
+    suspend fun syncOnForegroundIfNeeded(refreshAction: suspend () -> Unit) = withContext(Dispatchers.IO) {
+        if (_isLocalCacheDirty.value) {
+            AppLogger.d("SyncEngine: Local Cache Dirty Detected - Initiating Remote Fetch")
+            try {
+                refreshAction()
+                setCacheDirty(false) // 성공 시 플래그 초기화
+            } catch (e: Exception) {
+                AppLogger.e("SyncEngine: Foreground Sync Failed - Retaining Dirty Flag", e)
+                setCacheDirty(true)
+            }
+        } else {
+            AppLogger.d("SyncEngine: Cache is clean. Skipping remote fetch.")
+        }
     }
 }

@@ -20,11 +20,17 @@ class GetLookthroughAllocationUseCase {
     operator fun invoke(
         dashboardAssets: List<DashboardAsset>,
         assets: List<Asset>,
-        segments: List<AssetSegment>
+        segments: List<AssetSegment>,
+        currencyConverter: CurrencyConverter = DefaultCurrencyConverter()
     ): List<AllocationResult> {
         AppLogger.d("invoke - 룩스루 비중 계산 시작", data = "dashboardAssets=${dashboardAssets.size}, assets=${assets.size}, segments=${segments.size}")
-        val totalPortfolioValue = dashboardAssets.sumOf { it.totalValuationAmount }
-        if (totalPortfolioValue == 0.0) {
+        val totalPortfolioValue = dashboardAssets.sumOf { 
+            val asset = assets.find { a -> a.id == it.assetId }
+            val currency = asset?.currency ?: "KRW" // assuming currency property exists
+            currencyConverter.convertToKrw(it.totalValuationAmount, currency)
+        }
+        
+        if (totalPortfolioValue <= 0.0) {
             AppLogger.d("invoke - 포트폴리오 총 가치가 0이므로 빈 목록 반환")
             return emptyList()
         }
@@ -35,8 +41,15 @@ class GetLookthroughAllocationUseCase {
         val classAmountMap = mutableMapOf<String, Double>()
 
         for (dAsset in dashboardAssets) {
-            val amount = dAsset.totalValuationAmount
             val asset = assetMap[dAsset.assetId] ?: continue
+            // 외화 변환 방어 코드 적용
+            val currency = asset.currency ?: "KRW"
+            val amount = try {
+                currencyConverter.convertToKrw(dAsset.totalValuationAmount, currency)
+            } catch (e: Exception) {
+                AppLogger.e("GetLookthroughAllocationUseCase - 통화 변환 예외 발생", e)
+                dAsset.totalValuationAmount
+            }
 
             if (dAsset.lookthroughAvailable) {
                 val assetSegments = segmentMap[dAsset.assetId]

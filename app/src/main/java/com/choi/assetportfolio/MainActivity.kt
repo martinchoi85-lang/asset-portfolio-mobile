@@ -33,7 +33,8 @@ class MainActivity : ComponentActivity() {
         AppLogger.d("MainActivity onCreate - 시작")
         
         val postgrest = (application as AssetApplication).supabase.postgrest
-        val assetRepository = AssetRepositoryImpl(postgrest)
+        val syncRepository = com.choi.assetportfolio.data.repository.SyncRepository(postgrest)
+        val assetRepository = AssetRepositoryImpl(postgrest, syncRepository)
         val portfolioRepository = PortfolioRepository(postgrest)
         val calculatePortfolioYieldUseCase = CalculatePortfolioYieldUseCase()
         val getLookthroughAllocationUseCase = GetLookthroughAllocationUseCase()
