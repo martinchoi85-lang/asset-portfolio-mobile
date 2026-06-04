@@ -37,34 +37,61 @@ class MainActivity : ComponentActivity() {
         val portfolioRepository = PortfolioRepository(postgrest)
         val calculatePortfolioYieldUseCase = CalculatePortfolioYieldUseCase()
         val getLookthroughAllocationUseCase = GetLookthroughAllocationUseCase()
+        val manualAssetRepository = com.choi.assetportfolio.data.repository.ManualAssetRepository(postgrest)
 
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                AppLogger.d("ViewModelProvider.Factory - FinancialDashboardViewModel 생성")
-                return FinancialDashboardViewModel(
-                    assetRepository = assetRepository,
-                    portfolioRepository = portfolioRepository,
-                    calculatePortfolioYieldUseCase = calculatePortfolioYieldUseCase,
-                    getLookthroughAllocationUseCase = getLookthroughAllocationUseCase
-                ) as T
+                return when {
+                    modelClass.isAssignableFrom(FinancialDashboardViewModel::class.java) -> {
+                        AppLogger.d("ViewModelProvider.Factory - FinancialDashboardViewModel 생성")
+                        FinancialDashboardViewModel(
+                            assetRepository = assetRepository,
+                            portfolioRepository = portfolioRepository,
+                            calculatePortfolioYieldUseCase = calculatePortfolioYieldUseCase,
+                            getLookthroughAllocationUseCase = getLookthroughAllocationUseCase
+                        ) as T
+                    }
+                    modelClass.isAssignableFrom(com.choi.assetportfolio.ui.transactions.TransactionsViewModel::class.java) -> {
+                        AppLogger.d("ViewModelProvider.Factory - TransactionsViewModel 생성")
+                        com.choi.assetportfolio.ui.transactions.TransactionsViewModel(
+                            portfolioRepository = portfolioRepository
+                        ) as T
+                    }
+                    modelClass.isAssignableFrom(com.choi.assetportfolio.ui.management.ManagementHubViewModel::class.java) -> {
+                        AppLogger.d("ViewModelProvider.Factory - ManagementHubViewModel 생성")
+                        com.choi.assetportfolio.ui.management.ManagementHubViewModel(
+                            manualAssetRepository = manualAssetRepository
+                        ) as T
+                    }
+                    modelClass.isAssignableFrom(com.choi.assetportfolio.ui.analysis.AnalysisViewModel::class.java) -> {
+                        AppLogger.d("ViewModelProvider.Factory - AnalysisViewModel 생성")
+                        com.choi.assetportfolio.ui.analysis.AnalysisViewModel(
+                            assetRepository = assetRepository,
+                            portfolioRepository = portfolioRepository,
+                            getLookthroughAllocationUseCase = getLookthroughAllocationUseCase
+                        ) as T
+                    }
+                    else -> throw IllegalArgumentException("Unknown ViewModel class")
+                }
             }
         }
         viewModel = ViewModelProvider(this, factory)[FinancialDashboardViewModel::class.java]
+        val transactionsViewModel = ViewModelProvider(this, factory)[com.choi.assetportfolio.ui.transactions.TransactionsViewModel::class.java]
+        val managementHubViewModel = ViewModelProvider(this, factory)[com.choi.assetportfolio.ui.management.ManagementHubViewModel::class.java]
+        val analysisViewModel = ViewModelProvider(this, factory)[com.choi.assetportfolio.ui.analysis.AnalysisViewModel::class.java]
         AppLogger.d("MainActivity - ViewModel 초기화 완료")
         
         setContent {
-            val navController = rememberNavController()
-
-            NavHost(navController = navController, startDestination = "dashboard") {
-                composable("dashboard") {
-                    if (::viewModel.isInitialized) {
-                        AppLogger.d("NavHost - DashboardScreen 진입")
-                        DashboardScreen(viewModel = viewModel)
-                    } else {
-                        AppLogger.e("NavHost - ViewModel이 초기화되지 않음")
-                    }
-                }
+            if (::viewModel.isInitialized) {
+                com.choi.assetportfolio.ui.main.MainContainerScreen(
+                    viewModel = viewModel,
+                    transactionsViewModel = transactionsViewModel,
+                    managementHubViewModel = managementHubViewModel,
+                    analysisViewModel = analysisViewModel
+                )
+            } else {
+                AppLogger.e("MainActivity - ViewModel이 초기화되지 않음")
             }
         }
     }

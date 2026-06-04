@@ -56,6 +56,7 @@ fun DashboardScreen(
         ) {
         when (val state = uiState) {
             is DashboardUiState.Loading -> {
+                AppLogger.d("DashboardScreen Rendering", data = "State: Loading")
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(16.dp))
@@ -63,9 +64,11 @@ fun DashboardScreen(
                 }
             }
             is DashboardUiState.Empty -> {
+                AppLogger.d("DashboardScreen Rendering", data = "State: Empty")
                 Text(text = "상태: $state", style = MaterialTheme.typography.headlineMedium)
             }
             is DashboardUiState.Error -> {
+                AppLogger.d("DashboardScreen Rendering", data = "State: Error ($state)")
                 Text(
                     text = "상태: $state",
                     color = MaterialTheme.colorScheme.error,
@@ -73,6 +76,7 @@ fun DashboardScreen(
                 )
             }
             is DashboardUiState.Success -> {
+                AppLogger.d("DashboardScreen Rendering", data = "State: Success (Assets count: ${state.data.size})")
                 DashboardContent(
                     assets = state.data,
                     totalAssetAmount = state.totalAssetAmount,

@@ -38,4 +38,26 @@ class PortfolioRepository(private val postgrest: Postgrest) {
         AppLogger.d("getTransactions 결과 반환", data = "page=$page, transactionsCount=${result.size}")
         return result
     }
+
+    suspend fun getTargetWeights(groupingCriteria: String = "underlying_asset_class"): List<com.choi.assetportfolio.domain.model.PortfolioTargetWeight> {
+        val userId = SessionManager.requireUserId()
+        if (userId.isBlank()) {
+            AppLogger.e("getTargetWeights - userId is blank")
+            return emptyList()
+        }
+
+        return try {
+            postgrest.from("portfolio_target_weights")
+                .select {
+                    filter {
+                        eq("user_id", userId)
+                        eq("grouping_criteria", groupingCriteria)
+                    }
+                }
+                .decodeList<com.choi.assetportfolio.domain.model.PortfolioTargetWeight>()
+        } catch (e: Exception) {
+            AppLogger.e("getTargetWeights 오류", e)
+            emptyList()
+        }
+    }
 }
