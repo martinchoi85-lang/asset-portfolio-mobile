@@ -122,7 +122,6 @@ class AssetRepositoryImpl(
             
             val batch = postgrest.from("assets")
                 .select {
-                    filter { eq("user_id", userId) }
                     range(from.toLong()..to.toLong())
                 }
                 .decodeList<Asset>()
@@ -264,7 +263,6 @@ class AssetRepositoryImpl(
         val result = postgrest.from("asset_segments")
             .select {
                 filter {
-                    eq("user_id", userId)
                     eq("asset_id", assetId)
                 }
             }

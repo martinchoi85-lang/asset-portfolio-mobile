@@ -35,17 +35,15 @@ class FinancialDashboardViewModel(
     private val getLookthroughAllocationUseCase: GetLookthroughAllocationUseCase
 ) : ViewModel() {
 
-    val tabs = listOf("전체 계좌", "국민은행", "미래에셋", "신한은행", "+계좌추가")
-    private val accountIdMap = mapOf(
-        1 to "kb_bank_id",
-        2 to "mirae_asset_id",
-        3 to "shinhan_bank_id"
-    )
+    private val _tabs = MutableStateFlow<List<String>>(listOf("전체 계좌", "+계좌추가"))
+    val tabs: StateFlow<List<String>> = _tabs.asStateFlow()
+
+    private var accountIdMap = mapOf<Int, String>()
 
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
-    private val _isPrivacyModeEnabled = MutableStateFlow(true)
+    private val _isPrivacyModeEnabled = MutableStateFlow(false)
     val isPrivacyModeEnabled: StateFlow<Boolean> = _isPrivacyModeEnabled.asStateFlow()
 
     private val _selectedTabIndex = MutableStateFlow(0)
@@ -72,7 +70,7 @@ class FinancialDashboardViewModel(
 
     private fun applyFilter() {
         val index = _selectedTabIndex.value
-        val filteredAssets = if (index == 0 || index == 4) {
+        val filteredAssets = if (index == 0 || index == _tabs.value.lastIndex) {
             allDashboardAssets
         } else {
             val targetAccountId = accountIdMap[index]
@@ -100,6 +98,20 @@ class FinancialDashboardViewModel(
             AppLogger.d("State updated to Loading")
             
             try {
+                // Fetch user accounts to dynamically build tabs
+                val userAccounts = assetRepository.fetchUserAccounts()
+                val newTabs = mutableListOf("전체 계좌")
+                val newAccountIdMap = mutableMapOf<Int, String>()
+                
+                userAccounts.forEachIndexed { idx, account ->
+                    newTabs.add(account.name)
+                    newAccountIdMap[idx + 1] = account.id
+                }
+                newTabs.add("+계좌추가")
+                
+                _tabs.value = newTabs
+                accountIdMap = newAccountIdMap
+
                 val dashboardAssets = assetRepository.fetchDashboardAssets()
                 AppLogger.d("Data fetched from Repository", data = dashboardAssets.size.toString() + " assets")
                 

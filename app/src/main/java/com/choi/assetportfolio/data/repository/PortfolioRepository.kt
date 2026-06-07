@@ -25,10 +25,28 @@ class PortfolioRepository(private val postgrest: Postgrest) {
             return emptyList() // Prevent 22P02 Error
         }
         
+        // 1. 사용자의 계좌 목록을 먼저 조회
+        val userAccounts = try {
+            postgrest.from("accounts")
+                .select { filter { eq("user_id", userId) } }
+                .decodeList<com.choi.assetportfolio.domain.model.Account>()
+        } catch (e: Exception) {
+            AppLogger.e("계좌 목록 조회 실패", e)
+            emptyList()
+        }
+        
+        if (userAccounts.isEmpty()) {
+            AppLogger.d("getTransactions - no accounts found for user")
+            return emptyList()
+        }
+        
+        val accountIds = userAccounts.map { it.id }
+
+        // 2. 해당 계좌들에 속한 거래 내역 조회
         val result = postgrest.from("transactions")
             .select {
                 filter {
-                    eq("user_id", userId)
+                    isIn("account_id", accountIds)
                 }
                 order("transaction_date", Order.DESCENDING)
                 range(from.toLong()..to.toLong())
