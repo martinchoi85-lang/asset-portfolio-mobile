@@ -2,8 +2,12 @@ package com.choi.assetportfolio.data.repository
 
 import com.choi.assetportfolio.core.session.SessionManager
 import com.choi.assetportfolio.domain.model.Transaction
+import com.choi.assetportfolio.domain.model.DailySnapshot
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.query.Columns
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 import com.choi.assetportfolio.core.util.AppLogger
 
@@ -31,7 +35,11 @@ class PortfolioRepository(private val postgrest: Postgrest) {
                 .select { filter { eq("user_id", userId) } }
                 .decodeList<com.choi.assetportfolio.domain.model.Account>()
         } catch (e: Exception) {
-            AppLogger.e("계좌 목록 조회 실패", e)
+            if (e.javaClass.simpleName == "HttpRequestException" || e.message?.contains("Unable to resolve host", true) == true) {
+                AppLogger.d("네트워크 단절. 계좌 목록 조회 로컬 폴백")
+            } else {
+                AppLogger.e("계좌 목록 조회 실패", e)
+            }
             emptyList()
         }
         
@@ -44,7 +52,7 @@ class PortfolioRepository(private val postgrest: Postgrest) {
 
         // 2. 해당 계좌들에 속한 거래 내역 조회
         val result = postgrest.from("transactions")
-            .select {
+            .select(columns = Columns.raw("*, assets(name_kr, currency, asset_type, market, underlying_asset_class, economic_exposure_region, vehicle_type, lookthrough_available, price_source)")) {
                 filter {
                     isIn("account_id", accountIds)
                 }
@@ -55,6 +63,23 @@ class PortfolioRepository(private val postgrest: Postgrest) {
 
         AppLogger.d("getTransactions 결과 반환", data = "page=$page, transactionsCount=${result.size}")
         return result
+    }
+
+    suspend fun getUserAccounts(): List<com.choi.assetportfolio.domain.model.Account> {
+        val userId = SessionManager.requireUserId()
+        if (userId.isBlank()) return emptyList()
+        return try {
+            postgrest.from("accounts")
+                .select { filter { eq("user_id", userId) } }
+                .decodeList<com.choi.assetportfolio.domain.model.Account>()
+        } catch (e: Exception) {
+            if (e.javaClass.simpleName == "HttpRequestException" || e.message?.contains("Unable to resolve host", true) == true) {
+                AppLogger.d("네트워크 단절. getUserAccounts 로컬 폴백")
+            } else {
+                AppLogger.e("getUserAccounts 오류", e)
+            }
+            emptyList()
+        }
     }
 
     suspend fun getTargetWeights(groupingCriteria: String = "underlying_asset_class"): List<com.choi.assetportfolio.domain.model.PortfolioTargetWeight> {
@@ -74,7 +99,57 @@ class PortfolioRepository(private val postgrest: Postgrest) {
                 }
                 .decodeList<com.choi.assetportfolio.domain.model.PortfolioTargetWeight>()
         } catch (e: Exception) {
-            AppLogger.e("getTargetWeights 오류", e)
+            if (e.javaClass.simpleName == "HttpRequestException" || e.message?.contains("Unable to resolve host", true) == true) {
+                AppLogger.d("네트워크 단절. getTargetWeights 로컬 폴백")
+            } else {
+                AppLogger.e("getTargetWeights 오류", e)
+            }
+            emptyList()
+        }
+    }
+
+    suspend fun getDailySnapshots(startDate: LocalDate, endDate: LocalDate): List<DailySnapshot> {
+        val userId = SessionManager.requireUserId()
+        if (userId.isBlank()) {
+            AppLogger.e("getDailySnapshots - userId is blank")
+            return emptyList()
+        }
+
+        // 먼저 계좌 ID 목록을 가져와야 격리 보장이 됨 (getTransactions 방식 참조)
+        val userAccounts = try {
+            postgrest.from("accounts")
+                .select { filter { eq("user_id", userId) } }
+                .decodeList<com.choi.assetportfolio.domain.model.Account>()
+        } catch (e: Exception) {
+            if (e.javaClass.simpleName == "HttpRequestException" || e.message?.contains("Unable to resolve host", true) == true) {
+                AppLogger.d("네트워크 단절. getDailySnapshots 계좌 조회 로컬 폴백")
+            } else {
+                AppLogger.e("계좌 목록 조회 실패", e)
+            }
+            emptyList()
+        }
+        
+        if (userAccounts.isEmpty()) return emptyList()
+        val accountIds = userAccounts.map { it.id }
+
+        val formatter = DateTimeFormatter.ISO_LOCAL_DATE
+        return try {
+            postgrest.from("daily_snapshots")
+                .select {
+                    filter {
+                        isIn("account_id", accountIds)
+                        gte("date", startDate.format(formatter))
+                        lte("date", endDate.format(formatter))
+                    }
+                    order("date", Order.ASCENDING)
+                }
+                .decodeList<DailySnapshot>()
+        } catch (e: Exception) {
+            if (e.javaClass.simpleName == "HttpRequestException" || e.message?.contains("Unable to resolve host", true) == true) {
+                AppLogger.d("네트워크 단절. getDailySnapshots 로컬 폴백")
+            } else {
+                AppLogger.e("getDailySnapshots 오류", e)
+            }
             emptyList()
         }
     }

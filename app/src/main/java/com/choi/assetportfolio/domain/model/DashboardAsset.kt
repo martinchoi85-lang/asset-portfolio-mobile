@@ -18,5 +18,6 @@ data class DashboardAsset(
     val totalValuationAmount: Double,
     val unrealizedPnl: Double,
     val unrealizedReturnRate: Double,
-    val lookthroughAvailable: Boolean
+    val lookthroughAvailable: Boolean,
+    val currency: String = "won"
 )

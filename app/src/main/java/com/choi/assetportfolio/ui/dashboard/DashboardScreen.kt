@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.text.style.TextAlign
 import com.choi.assetportfolio.domain.model.DashboardAsset
 import com.choi.assetportfolio.domain.usecase.AllocationResult
 import java.text.NumberFormat
@@ -92,11 +94,16 @@ fun DashboardScreen(
             }
             is DashboardUiState.Success -> {
                 AppLogger.d("DashboardScreen Rendering", data = "State: Success (Assets count: ${state.data.size})")
+                val selectedRange = viewModel.selectedRange.collectAsState().value
                 DashboardContent(
                     assets = state.data,
                     totalAssetAmount = state.totalAssetAmount,
                     overallReturnRate = state.overallReturnRate,
                     allocations = state.allocations,
+                    trendData = state.trendData,
+                    bestPerformingAsset = state.bestPerformingAsset,
+                    selectedRange = selectedRange,
+                    onRangeSelected = { viewModel.selectRange(it) },
                     isMasked = isPrivacyModeEnabled,
                     onTogglePrivacyMode = { viewModel.togglePrivacyMode() },
                     isTotalAccount = selectedTabIndex == 0
@@ -139,6 +146,10 @@ fun DashboardContent(
     totalAssetAmount: Double,
     overallReturnRate: Double,
     allocations: List<AllocationResult>,
+    trendData: List<TrendData>,
+    bestPerformingAsset: BestAssetData?,
+    selectedRange: String,
+    onRangeSelected: (String) -> Unit,
     isMasked: Boolean,
     onTogglePrivacyMode: () -> Unit,
     isTotalAccount: Boolean
@@ -213,59 +224,22 @@ fun DashboardContent(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (isTotalAccount) {
-                // --- 포트폴리오 비중 카드 ---
-                if (allocations.isNotEmpty()) {
-                    item {
-                        PortfolioAllocationCardView(allocations = mapAllocationResultToData(allocations), isMasked = isMasked)
-                    }
-                }
-
+                // --- 대시보드 컴포넌트 구성 ---
                 item {
-                    Text(
-                        text = "보유 자산 목록",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = OnSurfaceColor,
-                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                    AssetTrendCardView(
+                        trendList = trendData,
+                        selectedRange = selectedRange,
+                        onRangeSelected = onRangeSelected
                     )
                 }
 
-                // --- 보유 자산 리스트 ---
-                items(assets) { asset ->
-                    val assetValueStr = if (isMasked) "₩ ••••••••" else currencyFormat.format(asset.totalValuationAmount)
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = CardBackground),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = asset.nameKr,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = OnSurfaceColor
-                                )
-                                Text(
-                                    text = "${asset.ticker} · ${asset.totalQuantity}주",
-                                    fontSize = 11.sp,
-                                    color = CustomGray
-                                )
-                            }
-                            Text(
-                                text = assetValueStr,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Black,
-                                color = OnSurfaceColor
-                            )
-                        }
+                item {
+                    PerformanceInsightCardView(bestAsset = bestPerformingAsset)
+                }
+
+                if (allocations.isNotEmpty()) {
+                    item {
+                        PortfolioAllocationCardView(allocations = mapAllocationResultToData(allocations), isMasked = isMasked)
                     }
                 }
             } else {
@@ -586,7 +560,16 @@ fun SectorMetricView(
 fun ActiveHoldingItemView(asset: DashboardAsset, isAlternating: Boolean, isMasked: Boolean) {
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA)
     val backgroundColor = if (isAlternating) LightGray.copy(alpha = 0.4f) else CardBackground
-    val assetValueStr = if (isMasked) "₩ ••••••••" else currencyFormat.format(asset.totalValuationAmount)
+    val assetValueStr = if (isMasked) {
+        if (asset.currency.equals("usd", ignoreCase = true)) "$ ••••••••" else "₩ ••••••••"
+    } else {
+        if (asset.currency.equals("usd", ignoreCase = true)) {
+            val formatUsd = java.text.DecimalFormat("$#,###.##")
+            formatUsd.format(asset.totalValuationAmount)
+        } else {
+            currencyFormat.format(asset.totalValuationAmount)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -642,6 +625,200 @@ fun ActiveHoldingItemView(asset: DashboardAsset, isAlternating: Boolean, isMaske
                     fontWeight = FontWeight.Bold,
                     color = OnSurfaceColor
                 )
+            }
+        }
+    }
+}
+
+// 1. 자산 추이 그래프 컴포넌트
+@Composable
+fun AssetTrendCardView(
+    trendList: List<TrendData>,
+    selectedRange: String,
+    onRangeSelected: (String) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardBackground),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Asset Trend", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = OnSurfaceColor)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(LightGray)
+                        .padding(2.dp)
+                ) {
+                    listOf("1주", "1개월", "3개월", "6개월", "1년").forEach { range ->
+                        val isSelected = selectedRange == range
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) CardBackground else Color.Transparent)
+                                .clickable { onRangeSelected(range) }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = range,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) OnSurfaceColor else Color.Gray
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(140.dp)
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val width = size.width
+                    val height = size.height
+                    val spacing = if (trendList.size > 1) width / (trendList.size - 1) else width
+
+                    val maxVal = trendList.maxOfOrNull { it.value } ?: 150f
+                    val minVal = trendList.minOfOrNull { it.value } ?: 130f
+                    val valRange = if (maxVal > minVal) (maxVal - minVal) else 1f
+                    val points = trendList.mapIndexed { idx, point ->
+                        val x = idx * spacing
+                        val ratio = (point.value - minVal) / valRange
+                        val y = height - (ratio * height)
+                        androidx.compose.ui.geometry.Offset(x, y)
+                    }
+
+                    if (points.isNotEmpty()) {
+                        val fillPath = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(0f, height)
+                            points.forEach { lineTo(it.x, it.y) }
+                            lineTo(width, height)
+                            close()
+                        }
+                        clipPath(fillPath) {
+                            drawRect(
+                                brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    colors = listOf(PrimaryRed.copy(alpha = 0.15f), Color.Transparent),
+                                    startY = 0f,
+                                    endY = height
+                                )
+                            )
+                        }
+
+                        val strokePath = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(points.first().x, points.first().y)
+                            for (i in 1 until points.size) {
+                                val pPrev = points[i - 1]
+                                val pCurr = points[i]
+                                val cp1 = androidx.compose.ui.geometry.Offset(pPrev.x + spacing / 2, pPrev.y)
+                                val cp2 = androidx.compose.ui.geometry.Offset(pCurr.x - spacing / 2, pCurr.y)
+                                cubicTo(cp1.x, cp1.y, cp2.x, cp2.y, pCurr.x, pCurr.y)
+                            }
+                        }
+                        drawPath(
+                            path = strokePath,
+                            color = PrimaryRed,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    horizontalAlignment = Alignment.End
+                ) {
+                    val maxVal = trendList.maxOfOrNull { it.value } ?: 150f
+                    val minVal = trendList.minOfOrNull { it.value } ?: 130f
+                    val midVal = (maxVal + minVal) / 2
+                    Text(String.format("%.1fM", maxVal/1000000), fontSize = 10.sp, color = Color.LightGray, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(40.dp))
+                    Text(String.format("%.1fM", midVal/1000000), fontSize = 10.sp, color = Color.LightGray, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(40.dp))
+                    Text(String.format("%.1fM", minVal/1000000), fontSize = 10.sp, color = Color.LightGray, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (trendList.isNotEmpty()) {
+                    val step = maxOf(1, trendList.size / 5)
+                    trendList.filterIndexed { index, _ -> index % step == 0 }.forEach { label ->
+                        Text(
+                            text = label.day,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray,
+                            modifier = Modifier.width(36.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 2. 실시간 인사이트 카드 컴포넌트
+@Composable
+fun PerformanceInsightCardView(bestAsset: BestAssetData?) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = PrimaryRed),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Insight Icon",
+                    tint = Color.White.copy(alpha = 0.82f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "PERFORMANCE INSIGHT",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.8f),
+                    letterSpacing = 1.sp
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                Column {
+                    Text(bestAsset?.assetName ?: "-", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Top Performing Asset", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    val rateText = bestAsset?.let {
+                        if (it.returnRate > 0) String.format("+%.1f%%", it.returnRate)
+                        else String.format("%.1f%%", it.returnRate)
+                    } ?: "-%"
+                    Text(rateText, fontSize = 24.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text(bestAsset?.periodLabel?.uppercase() ?: "-", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.8f))
+                }
             }
         }
     }

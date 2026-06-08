@@ -38,24 +38,29 @@ class AssetRepositoryImpl(
                 throw IllegalStateException("권한 설정이 필요합니다. 관리자에게 문의하세요.")
             }
             if (e.message?.contains("timeout", ignoreCase = true) == true) {
-                AppLogger.e("네트워크 연결 시간 초과. 로컬 캐시 폴백 시도", e)
+                AppLogger.d("네트워크 연결 시간 초과 (RestException). 로컬 캐시 폴백 시도")
                 fallbackBlock?.invoke() ?: throw e
             }
             throw e
         } catch (e: java.net.SocketTimeoutException) {
-            AppLogger.e("네트워크 단절: SocketTimeoutException. 로컬 캐시 폴백 시도", e)
+            AppLogger.d("네트워크 단절: SocketTimeoutException. 로컬 캐시 폴백 시도")
             fallbackBlock?.invoke() ?: throw e
         } catch (e: java.net.UnknownHostException) {
-            AppLogger.e("네트워크 단절: UnknownHostException. 로컬 캐시 폴백 시도", e)
+            AppLogger.d("네트워크 단절: UnknownHostException. 로컬 캐시 폴백 시도")
             fallbackBlock?.invoke() ?: throw e
         } catch (e: java.net.ConnectException) {
-            AppLogger.e("네트워크 단절: ConnectException. 로컬 캐시 폴백 시도", e)
+            AppLogger.d("네트워크 단절: ConnectException. 로컬 캐시 폴백 시도")
             fallbackBlock?.invoke() ?: throw e
         } catch (e: Exception) {
             // 다른 종류의 네트워크 예외일 가능성 확인
-            if (e.message?.contains("Failed to connect") == true || e.message?.contains("timeout") == true) {
-                AppLogger.e("기타 네트워크 단절 에러. 로컬 캐시 폴백 시도", e)
-                fallbackBlock?.invoke() ?: throw e
+            val msg = e.message ?: ""
+            if (msg.contains("Failed to connect", ignoreCase = true) || 
+                msg.contains("timeout", ignoreCase = true) ||
+                msg.contains("Unable to resolve host", ignoreCase = true) ||
+                e.javaClass.simpleName == "HttpRequestException"
+            ) {
+                AppLogger.d("네트워크 단절: ${e.javaClass.simpleName}. 로컬 캐시 폴백 시도 (${e.message})")
+                return fallbackBlock?.invoke() ?: throw e
             }
             throw e
         }
@@ -234,7 +239,8 @@ class AssetRepositoryImpl(
                 totalValuationAmount = totalValuationAmount,
                 unrealizedPnl = unrealizedPnl,
                 unrealizedReturnRate = unrealizedReturnRate,
-                lookthroughAvailable = asset.lookthroughAvailable
+                lookthroughAvailable = asset.lookthroughAvailable,
+                currency = asset.currency
             )
         }
 
