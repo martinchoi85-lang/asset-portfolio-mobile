@@ -104,6 +104,6 @@ def generate_structure_markdown(root_dir, output_file):
 
 if __name__ == '__main__':
     project_root = find_project_root()
-    output_path = os.path.join(project_root, 'docs', 'STRUCTURE.md')
+    output_path = os.path.join(project_root, 'ai_docs', 'STRUCTURE.md')
     generate_structure_markdown(project_root, output_path)
     print(f"Successfully generated structure map at: {output_path}")

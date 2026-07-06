@@ -277,6 +277,30 @@ class AssetRepositoryImpl(
         AppLogger.d("getAssetSegments 결과 반환", data = "assetId=$assetId, segmentsCount=${result.size}")
         result
     }
+
+    override suspend fun getAssetSegments(assetIds: List<Long>): List<AssetSegment> = wrapSupabaseCall(
+        fallbackBlock = {
+            AppLogger.d("getAssetSegments Fallback - 로컬 캐시 반환")
+            emptyList()
+        }
+    ) {
+        val userId = SessionManager.requireUserId()
+        if (userId.isBlank() || assetIds.isEmpty()) {
+            AppLogger.d("getAssetSegments - userId is blank or assetIds empty, returning empty list")
+            return@wrapSupabaseCall emptyList()
+        }
+        
+        val result = postgrest.from("asset_segments")
+            .select {
+                filter {
+                    isIn("asset_id", assetIds)
+                }
+            }
+            .decodeList<AssetSegment>()
+
+        AppLogger.d("getAssetSegments 결과 반환", data = "assetIdsCount=${assetIds.size}, segmentsCount=${result.size}")
+        result
+    }
 }
 
 

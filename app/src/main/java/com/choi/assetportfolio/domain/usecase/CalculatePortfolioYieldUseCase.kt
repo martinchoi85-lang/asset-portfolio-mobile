@@ -46,8 +46,9 @@ class CalculatePortfolioYieldUseCase {
             }
         }
 
-        val twr = if (netInvestedAmount > 0) {
-            ((currentTotalValuation - netInvestedAmount) / netInvestedAmount) * 100.0
+        val twr = if (netInvestedAmount != 0.0) {
+            val calc = ((currentTotalValuation - netInvestedAmount) / netInvestedAmount) * 100.0
+            if (calc.isNaN() || calc.isInfinite()) 0.0 else calc
         } else {
             0.0
         }

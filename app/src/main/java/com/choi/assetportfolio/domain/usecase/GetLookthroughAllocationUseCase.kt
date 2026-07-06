@@ -51,6 +51,10 @@ class GetLookthroughAllocationUseCase {
                 dAsset.totalValuationAmount
             }
 
+            val safeUnderlyingClass = asset.underlyingAssetClass.takeIf { it.isNotBlank() } ?: "equity".also {
+                AppLogger.d("DB Fallback", data = "underlying_asset_class is blank for assetId=${asset.id}, mapping to 'equity'")
+            }
+
             if (dAsset.lookthroughAvailable) {
                 val assetSegments = segmentMap[dAsset.assetId]
                 if (!assetSegments.isNullOrEmpty()) {
@@ -60,12 +64,12 @@ class GetLookthroughAllocationUseCase {
                             (classAmountMap[segment.segmentAssetClass] ?: 0.0) + segmentAmount
                     }
                 } else {
-                    classAmountMap[asset.underlyingAssetClass] = 
-                        (classAmountMap[asset.underlyingAssetClass] ?: 0.0) + amount
+                    classAmountMap[safeUnderlyingClass] = 
+                        (classAmountMap[safeUnderlyingClass] ?: 0.0) + amount
                 }
             } else {
-                classAmountMap[asset.underlyingAssetClass] = 
-                    (classAmountMap[asset.underlyingAssetClass] ?: 0.0) + amount
+                classAmountMap[safeUnderlyingClass] = 
+                    (classAmountMap[safeUnderlyingClass] ?: 0.0) + amount
             }
         }
 

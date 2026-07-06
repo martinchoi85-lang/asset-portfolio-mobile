@@ -4,8 +4,10 @@ import com.choi.assetportfolio.core.util.AppLogger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.choi.assetportfolio.domain.model.DashboardAsset
+import com.choi.assetportfolio.domain.model.Asset
 import com.choi.assetportfolio.domain.model.AssetSegment
 import com.choi.assetportfolio.domain.model.Transaction
+import com.choi.assetportfolio.domain.model.Account
 import com.choi.assetportfolio.domain.repository.AssetRepository
 import com.choi.assetportfolio.data.repository.PortfolioRepository
 import com.choi.assetportfolio.domain.usecase.CalculatePortfolioYieldUseCase
@@ -14,12 +16,17 @@ import com.choi.assetportfolio.domain.usecase.AllocationResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.choi.assetportfolio.domain.model.DailySnapshot
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-data class TrendData(val day: String, val value: Float)
+data class TrendData(val day: String, val value: Float, val timestamp: Long = 0L)
 data class BestAssetData(val assetName: String, val returnRate: Double, val periodLabel: String)
 
 sealed interface DashboardUiState {
@@ -30,11 +37,22 @@ sealed interface DashboardUiState {
         val overallReturnRate: Double,
         val allocations: List<AllocationResult>,
         val trendData: List<TrendData> = emptyList(),
-        val bestPerformingAsset: BestAssetData? = null
+        val bestPerformingAsset: BestAssetData? = null,
+        val hasUsdAccount: Boolean = false,
+        val isUsdDisplayPreferred: Boolean = false
     ) : DashboardUiState
     object Empty : DashboardUiState
     data class Error(val message: String) : DashboardUiState
 }
+
+data class RawPortfolioData(
+    val accounts: List<Account> = emptyList(),
+    val dashboardAssets: List<DashboardAsset> = emptyList(),
+    val transactions: List<Transaction> = emptyList(),
+    val dailySnapshots: List<DailySnapshot> = emptyList(),
+    val userAssets: List<Asset> = emptyList(),
+    val allSegments: List<AssetSegment> = emptyList()
+)
 
 class FinancialDashboardViewModel(
     private val assetRepository: AssetRepository,
@@ -46,25 +64,142 @@ class FinancialDashboardViewModel(
     private val _tabs = MutableStateFlow<List<String>>(listOf("전체 계좌", "+계좌추가"))
     val tabs: StateFlow<List<String>> = _tabs.asStateFlow()
 
-    private var accountIdMap = mapOf<Int, String>()
-
-    private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
-    val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
-
     private val _isPrivacyModeEnabled = MutableStateFlow(false)
     val isPrivacyModeEnabled: StateFlow<Boolean> = _isPrivacyModeEnabled.asStateFlow()
 
     private val _selectedTabIndex = MutableStateFlow(0)
     val selectedTabIndex: StateFlow<Int> = _selectedTabIndex.asStateFlow()
 
-    private var allDashboardAssets: List<DashboardAsset> = emptyList()
-    private var allAllocations: List<AllocationResult> = emptyList()
-    private var overallTwrReturnRate: Double = 0.0
-
-    private val _selectedRange = MutableStateFlow("1주")
+    private val _selectedRange = MutableStateFlow("1M")
     val selectedRange: StateFlow<String> = _selectedRange.asStateFlow()
+    
+    private val _isUsdDisplayPreferred = MutableStateFlow(false)
+    
+    private val rawDataFlow = MutableStateFlow(RawPortfolioData())
+    
+    private val exchangeRateFlow = MutableStateFlow(1380.0)
 
-    private var allDailySnapshots: List<DailySnapshot> = emptyList()
+    val uiState: StateFlow<DashboardUiState> = combine(
+        _selectedTabIndex,
+        _selectedRange,
+        _isUsdDisplayPreferred,
+        rawDataFlow,
+        exchangeRateFlow
+    ) { tabIndex, range, isUsdPref, rawData, exchangeRate ->
+        if (rawData.dashboardAssets.isEmpty()) {
+            return@combine DashboardUiState.Empty
+        }
+
+        val targetAccountId = if (tabIndex == 0 || tabIndex == _tabs.value.lastIndex) null else {
+            rawData.accounts.getOrNull(tabIndex - 1)?.id
+        }
+        
+        val activeAccount = rawData.accounts.find { it.id == targetAccountId }
+        val hasUsdAccount = activeAccount?.currency == "USD"
+        val applyUsdConversion = hasUsdAccount && isUsdPref
+
+        val filteredAssets = if (targetAccountId == null) {
+            rawData.dashboardAssets
+        } else {
+            rawData.dashboardAssets.filter { it.accountId == targetAccountId }
+        }
+
+        var totalValuation = filteredAssets.sumOf { it.totalValuationAmount }
+        if (applyUsdConversion) {
+            totalValuation /= exchangeRate
+        }
+
+        val filteredTransactions = if (targetAccountId == null) {
+            rawData.transactions.filter { it.parentTransactionId == null }
+        } else {
+            rawData.transactions.filter { it.accountId == targetAccountId }
+        }
+
+        val rangeDays = when (range) {
+            "1W" -> 7
+            "1M" -> 30
+            "3M" -> 90
+            "6M" -> 180
+            "1Y" -> 365
+            else -> 36500 // ALL
+        }
+        val targetStartDate = LocalDate.now().minusDays(rangeDays.toLong())
+
+        // Construct chart state using ONLY available discrete data points
+        val trendDataMap = mutableMapOf<LocalDate, Double>()
+        val now = LocalDate.now()
+
+        for (asset in filteredAssets) {
+            val snapshots = rawData.dailySnapshots.filter { 
+                it.assetId == asset.assetId && !it.date.isBefore(targetStartDate) && !it.date.isAfter(now)
+            }
+            for (snapshot in snapshots) {
+                trendDataMap[snapshot.date] = trendDataMap.getOrDefault(snapshot.date, 0.0) + snapshot.valuationAmount
+            }
+        }
+
+        val slicedTrendData = trendDataMap.map { (date, valuation) ->
+            var finalValuation = valuation
+            if (applyUsdConversion) {
+                finalValuation /= exchangeRate
+            }
+            val epoch = date.atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond()
+            TrendData(
+                day = date.format(DateTimeFormatter.ofPattern("MM/dd")),
+                value = finalValuation.toFloat(),
+                timestamp = epoch
+            )
+        }.sortedBy { it.timestamp }
+
+        var bestAssetObj: DashboardAsset? = null
+        var maxDelta = Double.NEGATIVE_INFINITY
+        
+        for (asset in filteredAssets) {
+            val startSnapshot = rawData.dailySnapshots
+                .filter { it.assetId == asset.assetId && !it.date.isBefore(targetStartDate) }
+                .minByOrNull { it.date }
+            val endSnapshot = rawData.dailySnapshots
+                .filter { it.assetId == asset.assetId && !it.date.isAfter(now) }
+                .maxByOrNull { it.date }
+            if (startSnapshot != null && endSnapshot != null && startSnapshot.valuationAmount > 0) {
+                val delta = (endSnapshot.valuationAmount - startSnapshot.valuationAmount) / startSnapshot.valuationAmount * 100.0
+                if (delta != 0.0 && delta > maxDelta) {
+                    maxDelta = delta
+                    bestAssetObj = asset
+                }
+            }
+        }
+        
+        val finalBestAssetObj = bestAssetObj ?: filteredAssets.maxByOrNull { it.unrealizedReturnRate }
+        val bestAsset = finalBestAssetObj?.let {
+            val isLifetime = bestAssetObj == null
+            BestAssetData(
+                assetName = it.nameKr,
+                returnRate = if (isLifetime) it.unrealizedReturnRate else maxDelta,
+                periodLabel = if (isLifetime) "ALL" else range
+            )
+        }
+
+        val yieldResult = calculatePortfolioYieldUseCase(filteredTransactions, totalValuation)
+        val allocations = getLookthroughAllocationUseCase(filteredAssets, rawData.userAssets, rawData.allSegments)
+
+        AppLogger.d("Asset Trend & Insight", data = "Trend List Count: ${slicedTrendData.size}, Yield: ${yieldResult.timeWeightedReturn}")
+
+        DashboardUiState.Success(
+            data = filteredAssets,
+            totalAssetAmount = totalValuation,
+            overallReturnRate = yieldResult.timeWeightedReturn,
+            allocations = allocations,
+            trendData = slicedTrendData,
+            bestPerformingAsset = bestAsset,
+            hasUsdAccount = hasUsdAccount,
+            isUsdDisplayPreferred = applyUsdConversion
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = DashboardUiState.Loading
+    )
 
     init {
         fetchDashboardData()
@@ -72,155 +207,62 @@ class FinancialDashboardViewModel(
 
     fun selectRange(range: String) {
         _selectedRange.value = range
-        applyFilter()
     }
 
     fun togglePrivacyMode() {
         _isPrivacyModeEnabled.value = !_isPrivacyModeEnabled.value
     }
 
-    fun selectTab(index: Int) {
-        _selectedTabIndex.value = index
-        val targetAccountId = accountIdMap[index]
-        AppLogger.d("Tab selected", data = "Index=$index, targetAccountId=$targetAccountId")
-        applyFilter()
+    fun toggleCurrencyDisplay() {
+        _isUsdDisplayPreferred.value = !_isUsdDisplayPreferred.value
     }
 
-    private fun applyFilter() {
-        val index = _selectedTabIndex.value
-        val filteredAssets = if (index == 0 || index == _tabs.value.lastIndex) {
-            allDashboardAssets
-        } else {
-            val targetAccountId = accountIdMap[index]
-            allDashboardAssets.filter { it.accountId == targetAccountId }
-        }
-        
-        val totalValuation = filteredAssets.sumOf { it.totalValuationAmount }
-        AppLogger.d("Assets filtered", data = "Selected Index: $index, Filtered Assets Count: ${filteredAssets.size}")
-
-        val rangeDays = when (_selectedRange.value) {
-            "1주" -> 7
-            "1개월" -> 30
-            "3개월" -> 90
-            "6개월" -> 180
-            "1년" -> 365
-            else -> 7
-        }
-        val targetStartDate = LocalDate.now().minusDays(rangeDays.toLong())
-        val snapshotsInRange = allDailySnapshots.filter { !it.date.isBefore(targetStartDate) }
-
-        val trendMap = snapshotsInRange.groupBy { it.date }.mapValues { entry ->
-            entry.value.sumOf { it.valuationAmount }
-        }
-        val sortedDates = trendMap.keys.sorted()
-        val trendDataList = sortedDates.map { date ->
-            TrendData(
-                day = date.format(DateTimeFormatter.ofPattern("MM/dd")),
-                value = trendMap[date]!!.toFloat()
-            )
-        }
-
-        var bestAsset: BestAssetData? = null
-        if (snapshotsInRange.isNotEmpty()) {
-            val assetPerformance = snapshotsInRange.groupBy { it.assetId }.mapNotNull { (assetId, snaps) ->
-                val startSnap = snaps.minByOrNull { it.date }
-                val endSnap = snaps.maxByOrNull { it.date }
-                if (startSnap != null && endSnap != null && startSnap.valuationAmount > 0) {
-                    val rate = (endSnap.valuationAmount - startSnap.valuationAmount) / startSnap.valuationAmount * 100
-                    val asset = allDashboardAssets.find { it.assetId == assetId }
-                    asset?.let { it.nameKr to rate }
-                } else null
-            }
-            val best = assetPerformance.maxByOrNull { it.second }
-            if (best != null) {
-                bestAsset = BestAssetData(
-                    assetName = best.first,
-                    returnRate = best.second,
-                    periodLabel = _selectedRange.value
-                )
-            }
-        }
-
-        AppLogger.d("Asset Trend & Insight", data = "Trend Data Points: ${trendDataList.size}, Best Asset: ${bestAsset?.assetName} (${bestAsset?.returnRate}%)")
-
-        if (filteredAssets.isEmpty()) {
-            _uiState.value = DashboardUiState.Empty
-        } else {
-            _uiState.value = DashboardUiState.Success(
-                data = filteredAssets,
-                totalAssetAmount = totalValuation,
-                overallReturnRate = overallTwrReturnRate,
-                allocations = allAllocations,
-                trendData = trendDataList,
-                bestPerformingAsset = bestAsset
-            )
-        }
+    fun selectTab(index: Int) {
+        _selectedTabIndex.value = index
     }
 
     fun fetchDashboardData() {
         viewModelScope.launch {
-            _uiState.value = DashboardUiState.Loading
-            AppLogger.d("State updated to Loading")
-            
             try {
-                // Fetch user accounts to dynamically build tabs
                 val userAccounts = assetRepository.fetchUserAccounts()
                 val newTabs = mutableListOf("전체 계좌")
-                val newAccountIdMap = mutableMapOf<Int, String>()
-                
-                userAccounts.forEachIndexed { idx, account ->
+                userAccounts.forEach { account ->
                     newTabs.add(account.name)
-                    newAccountIdMap[idx + 1] = account.id
                 }
                 newTabs.add("+계좌추가")
-                
                 _tabs.value = newTabs
-                accountIdMap = newAccountIdMap
 
                 val dashboardAssets = assetRepository.fetchDashboardAssets()
-                AppLogger.d("Data fetched from Repository", data = dashboardAssets.size.toString() + " assets")
                 
-                if (dashboardAssets.isEmpty()) {
-                    _uiState.value = DashboardUiState.Empty
-                    AppLogger.d("State updated to Empty")
-                } else {
-                    val totalValuation = dashboardAssets.sumOf { it.totalValuationAmount }
-                    
-                    // 1. 거래 내역 로드 및 TWR 수익률 계산
-                    val allTransactions = mutableListOf<Transaction>()
-                    var page = 0
-                    while (true) {
-                        val batch = portfolioRepository.getTransactions(page = page, pageSize = 500)
-                        allTransactions.addAll(batch)
-                        if (batch.size < 500) break
-                        page++
-                    }
-                    val yieldResult = calculatePortfolioYieldUseCase(allTransactions, totalValuation)
-
-                    // 2. 자산 상세 정보 및 세그먼트 로드하여 Look-through 비중 분석
-                    val userAssets = assetRepository.fetchUserAssets()
-                    val allSegments = mutableListOf<AssetSegment>()
-                    for (asset in dashboardAssets.filter { it.lookthroughAvailable }) {
-                        allSegments.addAll(assetRepository.getAssetSegments(asset.assetId))
-                    }
-                    val allocations = getLookthroughAllocationUseCase(dashboardAssets, userAssets, allSegments)
-
-                    // 3. 최근 1년치 Daily Snapshots 로드
-                    val endDate = LocalDate.now()
-                    val startDate = endDate.minusYears(1)
-                    allDailySnapshots = portfolioRepository.getDailySnapshots(startDate, endDate)
-
-                    // 4. 최종 가공된 데이터를 상태에 캐싱 후 UI 전달
-                    allDashboardAssets = dashboardAssets
-                    overallTwrReturnRate = yieldResult.timeWeightedReturn
-                    allAllocations = allocations
-                    
-                    AppLogger.d("All data loaded. Applying filter for tab: ${_selectedTabIndex.value}")
-                    applyFilter()
+                val fetchedTransactions = mutableListOf<Transaction>()
+                var page = 0
+                while (true) {
+                    val batch = portfolioRepository.getTransactions(page = page, pageSize = 500)
+                    fetchedTransactions.addAll(batch)
+                    if (batch.size < 500) break
+                    page++
                 }
+
+                val endDate = LocalDate.now()
+                val startDate = endDate.minusYears(1)
+                val allDailySnapshots = portfolioRepository.getDailySnapshots(startDate, endDate)
+                
+                val userAssets = assetRepository.fetchUserAssets()
+                val lookthroughAssetIds = dashboardAssets.filter { it.lookthroughAvailable }.map { it.assetId }
+                val allSegments = if (lookthroughAssetIds.isNotEmpty()) {
+                    assetRepository.getAssetSegments(lookthroughAssetIds)
+                } else emptyList()
+
+                rawDataFlow.value = RawPortfolioData(
+                    accounts = userAccounts,
+                    dashboardAssets = dashboardAssets,
+                    transactions = fetchedTransactions,
+                    dailySnapshots = allDailySnapshots,
+                    userAssets = userAssets,
+                    allSegments = allSegments
+                )
             } catch (e: Exception) {
                 AppLogger.e("State updated to Error", error = e)
-                _uiState.value = DashboardUiState.Error(e.message ?: "Unknown Error")
             }
         }
     }

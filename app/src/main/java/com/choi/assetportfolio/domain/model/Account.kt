@@ -12,5 +12,6 @@ data class Account(
     val oldOwner: String,
     val type: String,
     @SerialName("user_id")
-    val userId: String // UUID
+    val userId: String, // UUID
+    val currency: String = "KRW"
 )

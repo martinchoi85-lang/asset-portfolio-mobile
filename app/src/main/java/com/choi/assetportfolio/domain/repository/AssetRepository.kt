@@ -26,6 +26,7 @@ interface AssetRepository {
      * 특정 자산의 Look-through 구성을 위한 세그먼트 정보를 가져옵니다.
      */
     suspend fun getAssetSegments(assetId: Long): List<AssetSegment>
+    suspend fun getAssetSegments(assetIds: List<Long>): List<AssetSegment>
     /**
      * 로컬 메모리에 캐시된 데이터를 무효화합니다. 
      * 거래 데이터가 추가되거나 동기화된 후 호출해야 합니다.

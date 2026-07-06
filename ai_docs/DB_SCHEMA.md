@@ -1,5 +1,6 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
+-- Updated 2026.07.07
 
 CREATE TABLE public.codes (
   category text NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE public.accounts (
   old_owner text NOT NULL,
   type text NOT NULL,
   user_id uuid NOT NULL,
+  currency character varying NOT NULL DEFAULT 'KRW'::character varying CHECK (currency::text = ANY (ARRAY['KRW'::character varying, 'USD'::character varying]::text[])),
   CONSTRAINT accounts_pkey PRIMARY KEY (id),
   CONSTRAINT fk_accounts_user_id FOREIGN KEY (user_id) REFERENCES public.users(id)
 );

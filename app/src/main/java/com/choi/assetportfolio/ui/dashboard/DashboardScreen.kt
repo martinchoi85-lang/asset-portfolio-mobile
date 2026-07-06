@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,6 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -36,12 +40,14 @@ fun DashboardScreen(
     viewModel: FinancialDashboardViewModel,
     modifier: Modifier = Modifier
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val isPrivacyModeEnabled by viewModel.isPrivacyModeEnabled.collectAsState()
-    val selectedTabIndex by viewModel.selectedTabIndex.collectAsState()
-    val tabs by viewModel.tabs.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isPrivacyModeEnabled by viewModel.isPrivacyModeEnabled.collectAsStateWithLifecycle()
+    val selectedTabIndex by viewModel.selectedTabIndex.collectAsStateWithLifecycle()
+    val tabs by viewModel.tabs.collectAsStateWithLifecycle()
 
     AppLogger.d("DashboardScreen recomposed", data = "uiState=$uiState, isPrivacyModeEnabled=$isPrivacyModeEnabled")
+
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Column(modifier = modifier.fillMaxSize()) {
         ScrollableTabRow(
@@ -54,8 +60,12 @@ fun DashboardScreen(
                 Tab(
                     selected = selectedTabIndex == index,
                     onClick = { 
-                        AppLogger.d("Top Tab Clicked", data = "Tab: $title, Index: $index")
-                        viewModel.selectTab(index) 
+                        if (title == "+계좌추가") {
+                            android.widget.Toast.makeText(context, "Account creation UI pending specification sheet", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            AppLogger.d("Top Tab Clicked", data = "Tab: $title, Index: $index")
+                            viewModel.selectTab(index) 
+                        }
                     },
                     text = {
                         Text(
@@ -94,7 +104,7 @@ fun DashboardScreen(
             }
             is DashboardUiState.Success -> {
                 AppLogger.d("DashboardScreen Rendering", data = "State: Success (Assets count: ${state.data.size})")
-                val selectedRange = viewModel.selectedRange.collectAsState().value
+                val selectedRange by viewModel.selectedRange.collectAsStateWithLifecycle()
                 DashboardContent(
                     assets = state.data,
                     totalAssetAmount = state.totalAssetAmount,
@@ -106,7 +116,10 @@ fun DashboardScreen(
                     onRangeSelected = { viewModel.selectRange(it) },
                     isMasked = isPrivacyModeEnabled,
                     onTogglePrivacyMode = { viewModel.togglePrivacyMode() },
-                    isTotalAccount = selectedTabIndex == 0
+                    isTotalAccount = selectedTabIndex == 0,
+                    hasUsdAccount = state.hasUsdAccount,
+                    isUsdDisplayPreferred = state.isUsdDisplayPreferred,
+                    onToggleCurrencyDisplay = { viewModel.toggleCurrencyDisplay() }
                 )
             }
         }
@@ -152,10 +165,22 @@ fun DashboardContent(
     onRangeSelected: (String) -> Unit,
     isMasked: Boolean,
     onTogglePrivacyMode: () -> Unit,
-    isTotalAccount: Boolean
+    isTotalAccount: Boolean,
+    hasUsdAccount: Boolean,
+    isUsdDisplayPreferred: Boolean,
+    onToggleCurrencyDisplay: () -> Unit
 ) {
-    val currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA)
-    val totalAssetStr = if (isMasked) "₩ ••••••••" else currencyFormat.format(totalAssetAmount)
+    val totalAssetStr = if (isMasked) {
+        if (isUsdDisplayPreferred) "$ ••••••••" else "₩ ••••••••"
+    } else {
+        if (isUsdDisplayPreferred) {
+            val usdFormat = NumberFormat.getCurrencyInstance(Locale.US)
+            usdFormat.format(totalAssetAmount)
+        } else {
+            val currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA)
+            currencyFormat.format(totalAssetAmount)
+        }
+    }
     val returnRateStr = String.format(Locale.getDefault(), "%+.2f%%", overallReturnRate)
 
     Column(
@@ -194,27 +219,51 @@ fun DashboardContent(
             Spacer(modifier = Modifier.height(6.dp))
 
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = totalAssetStr,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = OnSurfaceColor
-                )
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(LightPrimaryRed)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = returnRateStr,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryRed
+                        text = totalAssetStr,
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = OnSurfaceColor
                     )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(LightPrimaryRed)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = returnRateStr,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryRed
+                        )
+                    }
+                }
+                
+                // Toggle Button (Only for USD accounts)
+                if (hasUsdAccount) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.LightGray.copy(alpha = 0.5f))
+                            .clickable { onToggleCurrencyDisplay() }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (isUsdDisplayPreferred) "USD" else "KRW",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.DarkGray
+                        )
+                    }
                 }
             }
         }
@@ -245,7 +294,11 @@ fun DashboardContent(
             } else {
                 // --- 개별 계좌 상세 뷰 ---
                 item {
-                    ProfitPerformanceCardView()
+                    ProfitPerformanceCardView(
+                        trendList = trendData,
+                        selectedRange = selectedRange,
+                        onRangeSelected = onRangeSelected
+                    )
                 }
 
                 if (allocations.isNotEmpty()) {
@@ -283,6 +336,7 @@ fun DashboardContent(
 
 @Composable
 fun PortfolioAllocationCardView(allocations: List<AllocationData>, isMasked: Boolean) {
+    AppLogger.d("PortfolioAllocationCardView Rendering", data = "allocations count: ${allocations.size}")
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA)
     
     Card(
@@ -399,7 +453,12 @@ fun PortfolioAllocationCardView(allocations: List<AllocationData>, isMasked: Boo
 }
 
 @Composable
-fun ProfitPerformanceCardView() {
+fun ProfitPerformanceCardView(
+    trendList: List<TrendData>,
+    selectedRange: String,
+    onRangeSelected: (String) -> Unit
+) {
+
     Card(
         colors = CardDefaults.cardColors(containerColor = CardBackground),
         shape = RoundedCornerShape(12.dp),
@@ -420,56 +479,116 @@ fun ProfitPerformanceCardView() {
                         color = OnSurfaceColor
                     )
                     Text(
-                        text = "Accumulated P/L over 30 days",
-                        fontSize = 11.sp,
-                        color = Color.Gray
+                        text = "Accumulated P/L"
                     )
                 }
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Drag widget",
-                    tint = Color.LightGray,
-                    modifier = Modifier.size(18.dp)
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf("1W", "1M", "3M", "6M", "1Y", "ALL").forEach { period ->
+                        val isSelected = selectedRange == period
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (isSelected) PrimaryRed else Color.Transparent)
+                                .clickable { onRangeSelected(period) }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = period,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else Color.Gray
+                            )
+                        }
+                    }
+                }
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(modifier = Modifier.height(16.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(130.dp),
-                contentAlignment = Alignment.BottomCenter
+                    .height(120.dp)
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val width = size.width
-                    val height = size.height
-
-                    val yBaseline = height * 0.6f
-                    drawLine(
-                        color = PrimaryRed,
-                        start = androidx.compose.ui.geometry.Offset(0f, yBaseline),
-                        end = androidx.compose.ui.geometry.Offset(width, yBaseline),
-                        strokeWidth = 1.5.dp.toPx()
-                    )
-
-                    val barCount = 6
-                    val gap = 12.dp.toPx()
-                    val totalGaps = (barCount - 1) * gap
-                    val barWidth = (width - totalGaps) / barCount
-                    
-                    val heightRatios = listOf(0.7f, 0.45f, 0.65f, 0.75f, 0.45f, 0.95f)
-
-                    for (i in 0 until barCount) {
-                        val barHeight = height * heightRatios[i]
-                        val x = i * (barWidth + gap)
-                        val y = height - barHeight
+                if (trendList.isEmpty()) {
+                    Text(text = "No Data", color = Color.Gray, fontSize = 12.sp)
+                } else {
+                    val textMeasurer = rememberTextMeasurer()
+                    Canvas(modifier = Modifier.fillMaxSize().padding(bottom = 20.dp)) {
+                        val width = size.width
+                        val height = size.height
                         
-                        drawRect(
-                            color = PrimaryRed.copy(alpha = 0.18f),
-                            topLeft = androidx.compose.ui.geometry.Offset(x, y),
-                            size = androidx.compose.ui.geometry.Size(barWidth, barHeight)
+                        val minVal = trendList.minOfOrNull { it.value } ?: 0f
+                        val maxVal = trendList.maxOfOrNull { it.value } ?: 100f
+                        val valRange = if (maxVal > minVal) (maxVal - minVal) else 1f
+
+                        val yBaseline = height * 0.6f
+                        drawLine(
+                            color = PrimaryRed,
+                            start = androidx.compose.ui.geometry.Offset(0f, yBaseline),
+                            end = androidx.compose.ui.geometry.Offset(width, yBaseline),
+                            strokeWidth = 1.5.dp.toPx()
                         )
+
+                        val barCount = trendList.size
+                        val gap = 4.dp.toPx()
+                        val totalGaps = (barCount - 1) * gap
+                        val barWidth = (width - totalGaps) / barCount
+
+                        trendList.forEachIndexed { i, point ->
+                            val ratio = (point.value - minVal) / valRange
+                            val barHeight = height * ratio
+                            val x = i * (barWidth + gap)
+                            val y = height - barHeight
+                            
+                            drawRect(
+                                color = PrimaryRed.copy(alpha = 0.4f),
+                                topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                                size = androidx.compose.ui.geometry.Size(barWidth, barHeight)
+                            )
+                        }
+                        
+                        val maxValText = String.format("%.1fM", maxVal / 1000000)
+                        val minValText = String.format("%.1fM", minVal / 1000000)
+                        
+                        drawText(
+                            textMeasurer = textMeasurer,
+                            text = maxValText,
+                            topLeft = androidx.compose.ui.geometry.Offset(width - 50.dp.toPx(), 0f),
+                            style = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, color = Color.Gray)
+                        )
+                        drawText(
+                            textMeasurer = textMeasurer,
+                            text = minValText,
+                            topLeft = androidx.compose.ui.geometry.Offset(width - 50.dp.toPx(), yBaseline + 4.dp.toPx()),
+                            style = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, color = Color.Gray)
+                        )
+
+                        if (trendList.size >= 3) {
+                            val startText = trendList.first().day
+                            val midText = trendList[trendList.size / 2].day
+                            val endText = trendList.last().day
+                            
+                            drawText(
+                                textMeasurer = textMeasurer,
+                                text = startText,
+                                topLeft = androidx.compose.ui.geometry.Offset(0f, height + 5.dp.toPx()),
+                                style = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, color = Color.Gray)
+                            )
+                            drawText(
+                                textMeasurer = textMeasurer,
+                                text = midText,
+                                topLeft = androidx.compose.ui.geometry.Offset(width / 2f - 20.dp.toPx(), height + 5.dp.toPx()),
+                                style = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, color = Color.Gray)
+                            )
+                            drawText(
+                                textMeasurer = textMeasurer,
+                                text = endText,
+                                topLeft = androidx.compose.ui.geometry.Offset(width - 40.dp.toPx(), height + 5.dp.toPx()),
+                                style = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, color = Color.Gray)
+                            )
+                        }
                     }
                 }
             }
@@ -479,6 +598,7 @@ fun ProfitPerformanceCardView() {
 
 @Composable
 fun AssetAllocationBarCardView(allocations: List<AllocationData>, isMasked: Boolean) {
+    AppLogger.d("AssetAllocationBarCardView Rendering", data = "allocations count: ${allocations.size}")
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA)
     val totalAmount = allocations.sumOf { it.value }
 
@@ -637,6 +757,7 @@ fun AssetTrendCardView(
     selectedRange: String,
     onRangeSelected: (String) -> Unit
 ) {
+    AppLogger.d("AssetTrendCardView Rendering", data = "trendList count: ${trendList.size}")
     Card(
         colors = CardDefaults.cardColors(containerColor = CardBackground),
         shape = RoundedCornerShape(16.dp),
@@ -656,7 +777,7 @@ fun AssetTrendCardView(
                         .background(LightGray)
                         .padding(2.dp)
                 ) {
-                    listOf("1주", "1개월", "3개월", "6개월", "1년").forEach { range ->
+                    listOf("1W", "1M", "3M", "6M", "1Y", "ALL").forEach { range ->
                         val isSelected = selectedRange == range
                         Box(
                             modifier = Modifier
@@ -683,53 +804,40 @@ fun AssetTrendCardView(
                     .fillMaxWidth()
                     .height(140.dp)
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
+                Canvas(modifier = Modifier.fillMaxSize().padding(bottom = 20.dp)) {
                     val width = size.width
                     val height = size.height
-                    val spacing = if (trendList.size > 1) width / (trendList.size - 1) else width
-
-                    val maxVal = trendList.maxOfOrNull { it.value } ?: 150f
-                    val minVal = trendList.minOfOrNull { it.value } ?: 130f
+                    
+                    val minVal = trendList.minOfOrNull { it.value } ?: 0f
+                    val maxVal = trendList.maxOfOrNull { it.value } ?: 100f
                     val valRange = if (maxVal > minVal) (maxVal - minVal) else 1f
-                    val points = trendList.mapIndexed { idx, point ->
-                        val x = idx * spacing
-                        val ratio = (point.value - minVal) / valRange
-                        val y = height - (ratio * height)
-                        androidx.compose.ui.geometry.Offset(x, y)
-                    }
 
-                    if (points.isNotEmpty()) {
-                        val fillPath = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(0f, height)
-                            points.forEach { lineTo(it.x, it.y) }
-                            lineTo(width, height)
-                            close()
-                        }
-                        clipPath(fillPath) {
+                    val yBaseline = height * 0.9f
+                    drawLine(
+                        color = PrimaryRed,
+                        start = androidx.compose.ui.geometry.Offset(0f, yBaseline),
+                        end = androidx.compose.ui.geometry.Offset(width, yBaseline),
+                        strokeWidth = 1.dp.toPx()
+                    )
+
+                    if (trendList.isNotEmpty()) {
+                        val barCount = trendList.size
+                        val gap = 4.dp.toPx()
+                        val totalGaps = (barCount - 1) * gap
+                        val barWidth = (width - totalGaps) / barCount
+
+                        trendList.forEachIndexed { i, point ->
+                            val ratio = (point.value - minVal) / valRange
+                            val barHeight = (height * 0.8f) * ratio
+                            val x = i * (barWidth + gap)
+                            val y = yBaseline - barHeight
+                            
                             drawRect(
-                                brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                                    colors = listOf(PrimaryRed.copy(alpha = 0.15f), Color.Transparent),
-                                    startY = 0f,
-                                    endY = height
-                                )
+                                color = PrimaryRed.copy(alpha = 0.5f),
+                                topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                                size = androidx.compose.ui.geometry.Size(barWidth, barHeight)
                             )
                         }
-
-                        val strokePath = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(points.first().x, points.first().y)
-                            for (i in 1 until points.size) {
-                                val pPrev = points[i - 1]
-                                val pCurr = points[i]
-                                val cp1 = androidx.compose.ui.geometry.Offset(pPrev.x + spacing / 2, pPrev.y)
-                                val cp2 = androidx.compose.ui.geometry.Offset(pCurr.x - spacing / 2, pCurr.y)
-                                cubicTo(cp1.x, cp1.y, cp2.x, cp2.y, pCurr.x, pCurr.y)
-                            }
-                        }
-                        drawPath(
-                            path = strokePath,
-                            color = PrimaryRed,
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                        )
                     }
                 }
 
@@ -737,8 +845,8 @@ fun AssetTrendCardView(
                     modifier = Modifier.align(Alignment.TopEnd),
                     horizontalAlignment = Alignment.End
                 ) {
-                    val maxVal = trendList.maxOfOrNull { it.value } ?: 150f
-                    val minVal = trendList.minOfOrNull { it.value } ?: 130f
+                    val minVal = trendList.minOfOrNull { it.value } ?: 0f
+                    val maxVal = trendList.maxOfOrNull { it.value } ?: 100f
                     val midVal = (maxVal + minVal) / 2
                     Text(String.format("%.1fM", maxVal/1000000), fontSize = 10.sp, color = Color.LightGray, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(40.dp))
@@ -778,7 +886,7 @@ fun PerformanceInsightCardView(bestAsset: BestAssetData?) {
     Card(
         colors = CardDefaults.cardColors(containerColor = PrimaryRed),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
@@ -807,16 +915,32 @@ fun PerformanceInsightCardView(bestAsset: BestAssetData?) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom
             ) {
-                Column {
-                    Text(bestAsset?.assetName ?: "-", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = bestAsset?.assetName ?: "-", 
+                        fontSize = 20.sp, 
+                        fontWeight = FontWeight.Bold, 
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text("Top Performing Asset", fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
                 }
-                Column(horizontalAlignment = Alignment.End) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier.padding(start = 16.dp)
+                ) {
                     val rateText = bestAsset?.let {
                         if (it.returnRate > 0) String.format("+%.1f%%", it.returnRate)
                         else String.format("%.1f%%", it.returnRate)
                     } ?: "-%"
-                    Text(rateText, fontSize = 24.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text(
+                        text = rateText, 
+                        fontSize = 24.sp, 
+                        fontWeight = FontWeight.Black, 
+                        color = Color.White,
+                        maxLines = 1
+                    )
                     Text(bestAsset?.periodLabel?.uppercase() ?: "-", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.8f))
                 }
             }
